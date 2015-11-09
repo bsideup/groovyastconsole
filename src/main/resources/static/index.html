@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Groovy AST Console</title>
+    <link rel="stylesheet" href="/webjars/jstree/3.0.3/themes/default/style.min.css" />
+    <link rel="stylesheet" href="/webjars/bootstrap/3.2.0/css/bootstrap.min.css">
+
+    <script src="/webjars/jquery/1.11.1/jquery.min.js"></script>
+    <script src="/webjars/jstree/3.0.3/jstree.min.js"></script>
+    <script src="/webjars/ace/1.1.3/static_highlight.js"></script>
+    <script src="/webjars/bootstrap/3.2.0/js/bootstrap.min.js"></script>
+
+    <style>
+        .nav-tabs .secondary-nav {
+            float:right;
+            margin-left:10px;
+            margin-right:0;
+        }
+    </style>
+
+    
+    <script>
+        $(function () {
+            $("#myTab li:eq(0) a").tab('show');
+
+            var editor = ace.edit("editor");
+            editor.setTheme("ace/theme/github");
+            editor.getSession().setMode("ace/mode/groovy");
+            editor.setShowPrintMargin(false);
+
+            var showASTButton = $('#showASTButton');
+            
+            showASTButton.click(function() {
+                // Re-create generator editor because ACE doens't reload it properly
+                $("#generatorEditorContainer").html('<div id="generatorEditor" style="height: 600px;"></div>');
+                var generatorEditor = ace.edit("generatorEditor");
+                generatorEditor.setTheme("ace/theme/github");
+                generatorEditor.getSession().setMode("ace/mode/java");
+                generatorEditor.setShowPrintMargin(false);
+                generatorEditor.setReadOnly(true);
+                
+                showASTButton.disabled = true;
+                showASTButton.addClass('disabled');
+                
+                $('#ast_tree_div').jstree("destroy").empty();
+                $('#attributes_table tbody').html('');
+
+                var startTime = new Date().getTime();
+                $.post("/build", {
+                    script : editor.getSession().getValue(),
+                    phase : $('#compilePhaseSelect option:selected').text(),
+                    filter : $("#enableSyntheticFilter").is(':checked')
+                }, function(data) {
+                    $("#compilation_alert_message").html("");
+                    $('#compilation_alert').hide();
+                    
+                    var endTime = new Date().getTime();
+                    var timeSpent = endTime - startTime;
+
+                    ga('send', 'timing', 'AJAX', 'build_latency', timeSpent);
+                    
+                    showASTButton.disabled = false;
+                    showASTButton.removeClass('disabled');
+                    var tree = $('#ast_tree_div');
+                    var jsonData = JSON.parse(data);
+                    
+                    if(jsonData.hasOwnProperty("error")) {
+
+                        $("#compilation_alert_message").html(jsonData.error.split("\n").join("<br />"));
+
+                        $('#compilation_alert').show();
+                        
+                        return;
+                    }
+                    generatorEditor.setValue(jsonData.builder);
+
+                    tree.jstree({
+                        'core' : {
+                            'multiple' : false,
+                            'data' : jsonData.nodes
+                        }
+                    });
+
+                    tree.on('changed.jstree', function (e, data) {
+                        var attributes = data.instance.get_node(data.selected[0]).original.attributes;
+
+                        var tbody = "";
+
+                        for(attributeName in attributes) {
+                            tbody += "<tr><td>" + attributeName + "</td><td style='word-break: break-all !important;'>" + attributes[attributeName] + "</td></tr>";
+                        }
+
+                        $('#attributes_table tbody').html(tbody);
+                    });
+
+                    tree.on('loaded.jstree', function() {
+                        //tree.jstree('open_all');
+                    });
+
+                    $("#myTab li:eq(1) a").tab('show');
+                })
+            });
+
+            var $affix = $(".affix-container");
+            var $parent = $affix.parent();
+            var resize = function() { $affix.width($parent.width()); };
+            $(window).resize(resize);
+            resize();
+        });
+    </script>
+</head>
+<body>
+<div class="container">
+    <div class="page-header">
+        <h1>Groovy AST Viewer</h1>
+        <p class="lead">Simple tool to explore AST.</p>
+    </div>
+    <div id="compilation_alert" class="alert alert-danger alert-dismissible" style="display:none;">
+        <div id="compilation_alert_message"></div>
+    </div>
+    <ul class="nav nav-tabs" id="myTab">
+        <li><a data-toggle="tab" href="#codeView">Code view</a></li>
+        <li><a data-toggle="tab" href="#astView">AST view</a></li>
+        <li><a data-toggle="tab" href="#generatorView">Generator view&nbsp;<span class="label label-warning">alpha</span></a></li>
+        <li class="secondary-nav"><button id="showASTButton" type="button" class="btn btn-primary">Show AST</button></li>
+        <li class="secondary-nav">
+            <select id="compilePhaseSelect" class="form-control" style="width: 200px;">
+                <option selected>CONVERSION</option>
+                <option>SEMANTIC_ANALYSIS</option>
+                <option>CANONICALIZATION</option>
+                <option>INSTRUCTION_SELECTION</option>
+                <option>CLASS_GENERATION</option>
+            </select>
+        </li>
+        <li class="secondary-nav">
+            <div class="checkbox">
+            <label>
+                <input id="enableSyntheticFilter" type="checkbox" checked>Synthetic filter enabled
+            </label>
+        </div>
+        </li>
+    </ul>
+    <div class="tab-content">
+        <div id="codeView" class="tab-pane fade in active">
+            <div class="panel panel-default">
+                <div id="editor" style="height: 600px;">println a</div>
+            </div>
+        </div>
+        <div id="astView" class="tab-pane fade" style="padding-top: 10px;">
+            <div class="col-md-7">
+                <div class="panel panel-default">
+                    <div class="panel-body">
+                        <h4>AST tree</h4>
+                        <div id="ast_tree_div" style="overflow-x: scroll;"></div>
+                    </div>
+                </div>
+            </div>
+            <div id="attributes_panel" class="col-md-5">
+                <div class="panel panel-default" data-spy-disabled="affix" data-offset-top="200" data-offset-bottom="1" style="top:20px; width: 450px;">
+                    <div class="panel-body">
+                        <h4>Attributes</h4>
+                        <table id="attributes_table" class="table table-striped">
+                            <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Value</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="generatorView" class="tab-pane fade in active">
+            <div id="generatorEditorContainer" class="panel panel-default">
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p class="pull-right">Sergei Egorov  &middot; <a href="//twitter.com/bsideup" target="_blank">@bsideup</a></p>
+    </footer>
+</div>
+
+</body>
+</html>
